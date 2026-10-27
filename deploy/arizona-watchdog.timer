@@ -1,0 +1,9 @@
+[Unit]
+Description=Run Arizona parser watchdog every minute
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+
+[Install]
+WantedBy=timers.target

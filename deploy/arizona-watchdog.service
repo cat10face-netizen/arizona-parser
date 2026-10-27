@@ -1,0 +1,6 @@
+[Unit]
+Description=Arizona parser watchdog
+
+[Service]
+Type=oneshot
+ExecStart=/root/arizona-parser-portable/watchdog.sh

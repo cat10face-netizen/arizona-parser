@@ -1,0 +1,30 @@
+[package]
+name = "arizona-parser"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+chromiumoxide = "0.7"
+tokio = { version = "1", features = ["full"] }
+futures = "0.3"
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+scraper = "0.20"
+anyhow = "1"
+log = "0.4"
+env_logger = "0.11"
+rand = "0.8"
+url = "2"
+aes-gcm = "0.10"
+base64 = "0.22"
+getrandom = "0.2"
+uuid = { version = "1", features = ["v4"] }
+rand_core = "0.6"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true

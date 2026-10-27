@@ -1,0 +1,9 @@
+# Список разделов форума Arizona RP (по одной ссылке на строку).
+# Строки, начинающиеся с #, игнорируются.
+https://forum.arizona-rp.com/forums/4041/
+https://forum.arizona-rp.com/forums/4042/
+https://forum.arizona-rp.com/forums/4043/
+https://forum.arizona-rp.com/forums/4044/
+https://forum.arizona-rp.com/forums/4045/
+https://forum.arizona-rp.com/forums/4048/
+https://forum.arizona-rp.com/forums/4050/

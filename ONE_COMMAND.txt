@@ -1,0 +1,21 @@
+ОДНА КОМАНДА (выполнить в PowerShell на Windows)
+=================================================
+
+scp "C:\Users\admin\Desktop\Парсер форума\arizona-parser-portable.zip" root@recent-peach-stoat:/root/ ; ssh root@recent-peach-stoat "apt-get update -qq && apt-get install -y -qq unzip && cd /opt && rm -rf arizona-parser && mkdir -p arizona-parser && cd arizona-parser && unzip -oq /root/arizona-parser-portable.zip && bash install.sh"
+
+Что произойдёт:
+  1. архив зальётся на сервер;
+  2. установятся unzip, системные пакеты, Google Chrome, Rust;
+  3. проект соберётся;
+  4. создастся systemd-сервис с автозапуском;
+  5. бот запустится.
+
+Если имя хоста не резолвится — замени root@recent-peach-stoat на root@IP_СЕРВЕРА
+
+Проверка после установки:
+  ssh root@recent-peach-stoat "systemctl status arizona-parser --no-pager"
+Логи:
+  ssh root@recent-peach-stoat "tail -n 50 /opt/arizona-parser/bot.log"
+Стоп / рестарт:
+  ssh root@recent-peach-stoat "systemctl stop arizona-parser"
+  ssh root@recent-peach-stoat "systemctl restart arizona-parser"

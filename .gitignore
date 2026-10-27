@@ -1,0 +1,14 @@
+# секреты и данные — НЕ в репозиторий
+secret.key
+users.json
+cookies.json
+cookies_raw.txt
+state.db
+*.zip
+config.toml
+profiles/
+*.log
+bot.log
+
+# сборка
+target/
