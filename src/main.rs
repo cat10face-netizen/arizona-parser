@@ -156,7 +156,17 @@ async fn main() -> anyhow::Result<()> {
                                 let kb = reply_keyboard(&t.id);
                                 let mut sent = 0;
                                 for u in users2.all().iter().filter(|u| u.enabled) {
-                                    if vk2.send_message(u.vk_id, &msg, Some(kb.clone())).await { sent += 1; }
+                                    // если человек выбрал разделы — шлём только по ним; иначе всё
+                                    let want = if u.sections.is_empty() {
+                                        true
+                                    } else {
+                                        u.sections.iter().any(|s| {
+                                            s.trim_end_matches('/') == sec.trim_end_matches('/')
+                                        })
+                                    };
+                                    if want && vk2.send_message(u.vk_id, &msg, Some(kb.clone())).await {
+                                        sent += 1;
+                                    }
                                 }
                                 if sent > 0 { log::info!("уведомление: {} ({} чел.)", t.title, sent); }
                                 storage2.mark_notified_key(&key);
