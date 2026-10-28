@@ -78,7 +78,7 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
-    // ---- периодический парсинг по каждому пользователю ----
+    // ---- периодический парсинг: парсим ОДИН раз, рассылаем ВСЕМ ----
     {
         let cfg2 = cfg.clone();
         let storage2 = storage.clone();
@@ -86,110 +86,88 @@ async fn main() -> anyhow::Result<()> {
         let vk2 = vk.clone();
         let sessions2 = sessions.clone();
         tokio::spawn(async move {
-            // "первое наполнение" только если база пустая
-            let mut first_round = storage2.count() == 0;
+            // первый круг всегда "тихий", чтобы не заспамить после обновления
+            let mut first_round = true;
             loop {
-                let user_list = users2.all();
-                for user in user_list {
-                    if !user.enabled || user.cookies_enc.is_empty() {
-                        continue;
-                    }
-                    let Some(cookies) = users2.cookies(user.vk_id) else { continue };
-                // ---- жалобы на администратора (по содержимому первого поста) ----
+                let owner = users2
+                    .cookies(cfg2.vk_admin_id)
+                    .map(|c| (cfg2.vk_admin_id, c))
+                    .or_else(|| {
+                        users2.all().into_iter()
+                            .find_map(|u| users2.cookies(u.vk_id).map(|c| (u.vk_id, c)))
+                    });
+
+                let Some((owner_id, cookies)) = owner else {
+                    log::warn!("нет пользователей с cookies — парсинг невозможен");
+                    tokio::time::sleep(Duration::from_secs(cfg2.check_interval_secs)).await;
+                    continue;
+                };
+
+                let Some(forum) = get_session(&sessions2, &cfg2, owner_id, &cookies, "owner").await else {
+                    tokio::time::sleep(Duration::from_secs(cfg2.check_interval_secs)).await;
+                    continue;
+                };
+
+                // --- жалобы на администратора ---
                 if !cfg2.admin_section.is_empty() {
-                    if let Some(cookies) = users2.cookies(cfg2.vk_admin_id) {
-                        if let Some(forum) = get_session(&sessions2, &cfg2, cfg2.vk_admin_id, &cookies, "Админ").await {
-                            match forum.forum.parse_section(&cfg2, &cfg2.admin_section).await {
-                                Ok(threads) => {
-                                    log::info!("админ-раздел: найдено тем {}", threads.len());
-                                    let mut checked = 0usize;
-                                    for t in threads {
-                                        if checked >= 12 { break; }
-                                        let key = format!("admin|{}", t.url);
-                                        if storage2.is_seen(&key) { continue; }
-                                        checked += 1;
-                                        match forum.forum.read_first_post(&t.url).await {
-                                            Ok((body, author)) => {
-                                                storage2.add_key(&key, &t);
-                                                if nick::contains_admin_nick(&body, &cfg2.admin_nicks).is_some() {
-                                                    let snippet: String = body.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(600).collect();
-                                                    let msg = format!(
-                                                        " Жалоба на администратора\n\n {}\n Автор: {}\n\n {}\n\n {}",
-                                                        t.title, author, snippet, t.url
-                                                    );
-                                                    let kb = reply_keyboard(&t.id);
-                                                    if vk2.send_message(cfg2.vk_admin_id, &msg, Some(kb)).await {
-                                                        log::info!("[admin-alert] {}", t.title);
-                                                        storage2.mark_notified_key(&key);
-                                                    }
-                                                }
-                                            }
-                                            Err(e) => log::warn!("чтение темы {}: {}", t.url, e),
-                                        }
-                                        if checked == 1 {
-                                            log::info!("админ-раздел: проверил первую тему");
-                                        }
-                                    }
-                                }
-                                Err(e) => log::error!("раздел админов {}: {}", cfg2.admin_section, e),
-                            }
-                        }
-                    }
-                }
-
-                    let sections = cfg2.sections(); // всем все разделы
-                    
-
-                    // получаем/создаём сессию
-                    let forum = get_session(
-                        &sessions2, &cfg2, user.vk_id, &cookies, &user.name,
-                    ).await;
-                    let Some(forum) = forum else {
-                        vk2.send_message(user.vk_id, " Не удалось запустить браузер (проверь cookies).", None).await;
-                        continue;
-                    };
-
-                    for sec in sections {
-                        // Новый раздел (ещё нет ни одной темы в базе) — наполняем молча,
-                        // чтобы не прилетело 100 уведомлений сразу после добавления.
-                        let seed_section = !storage2.has_section(&sec);
-                        if seed_section {
-                            log::info!("[{}] новый раздел {} — тихое наполнение", user.name, sec);
-                        }
-                        match forum.forum.parse_section(&cfg2, &sec).await {
-                            Ok(threads) => {
-                                log::info!("[{}] раздел {}: {} тем", user.name, sec, threads.len());
-                                for t in threads {
-                                    let key = format!("{}|{}", user.vk_id, t.url);
-                                    if storage2.is_seen(&key) {
-                                        continue;
-                                    }
-                                    storage2.add_key(&key, &t);
-                                    if first_round || seed_section {
-                                        continue;
-                                    }
-                                    let sec_name = cfg2.section_title(&sec);
+                    if let Ok(threads) = forum.forum.parse_section(&cfg2, &cfg2.admin_section).await {
+                        let mut checked = 0usize;
+                        for t in threads {
+                            if checked >= 12 { break; }
+                            let key = format!("admin|{}", t.url);
+                            if storage2.is_seen(&key) { continue; }
+                            checked += 1;
+                            if let Ok((body, author)) = forum.forum.read_first_post(&t.url).await {
+                                storage2.add_key(&key, &t);
+                                if nick::contains_admin_nick(&body, &cfg2.admin_nicks).is_some() {
+                                    let snippet: String = body.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(600).collect();
                                     let msg = format!(
-                                        " Новая тема\n {}\n\n {}\n Автор: {}\n {}",
-                                        sec_name, t.title, t.author, t.url
+                                        "⚠️ Жалоба на администратора\n\n📌 {}\n👤 Автор: {}\n\n📝 {}\n\n🔗 {}",
+                                        t.title, author, snippet, t.url
                                     );
                                     let kb = reply_keyboard(&t.id);
-                                    // уведомления только в личные сообщения
-                                    if vk2.send_message(user.vk_id, &msg, Some(kb)).await {
-                                        log::info!("[{}] уведомление: {}", user.name, t.title);
-                                        storage2.mark_notified_key(&key);
-                                    } else {
-                                        log::warn!("[{}] не удалось отправить уведомление: {}", user.name, t.title);
+                                    for u in users2.all().iter().filter(|u| u.enabled) {
+                                        vk2.send_message(u.vk_id, &msg, Some(kb.clone())).await;
                                     }
-                                    let d = cfg2.min_delay
-                                        + rand::random::<f64>() * (cfg2.max_delay - cfg2.min_delay);
-                                    tokio::time::sleep(Duration::from_secs_f64(d)).await;
+                                    log::info!("[admin-alert] {}", t.title);
+                                    storage2.mark_notified_key(&key);
                                 }
                             }
-                            Err(e) => log::error!("[{}] раздел {}: {}", user.name, sec, e),
                         }
                     }
                 }
+
+                // --- обычные разделы ---
+                for sec in cfg2.sections() {
+                    let seed_section = !storage2.has_section(&sec);
+                    match forum.forum.parse_section(&cfg2, &sec).await {
+                        Ok(threads) => {
+                            log::info!("раздел {}: {} тем", sec, threads.len());
+                            for t in threads {
+                                let key = format!("all|{}", t.url);
+                                if storage2.is_seen(&key) { continue; }
+                                storage2.add_key(&key, &t);
+                                if first_round || seed_section { continue; }
+                                let sec_name = cfg2.section_title(&sec);
+                                let msg = format!(
+                                    "🆕 Новая тема\n🗂 {}\n\n📌 {}\n👤 Автор: {}\n🔗 {}",
+                                    sec_name, t.title, t.author, t.url
+                                );
+                                let kb = reply_keyboard(&t.id);
+                                let mut sent = 0;
+                                for u in users2.all().iter().filter(|u| u.enabled) {
+                                    if vk2.send_message(u.vk_id, &msg, Some(kb.clone())).await { sent += 1; }
+                                }
+                                if sent > 0 { log::info!("уведомление: {} ({} чел.)", t.title, sent); }
+                                storage2.mark_notified_key(&key);
+                                let d = cfg2.min_delay + rand::random::<f64>() * (cfg2.max_delay - cfg2.min_delay);
+                                tokio::time::sleep(Duration::from_secs_f64(d)).await;
+                            }
+                        }
+                        Err(e) => log::error!("раздел {}: {}", sec, e),
+                    }
+                }
+
                 first_round = false;
                 tokio::time::sleep(Duration::from_secs(cfg2.check_interval_secs)).await;
             }
