@@ -21,6 +21,8 @@ pub struct Config {
     pub log_file: String,
     pub admin_section: String,
     pub admin_nicks: Vec<String>,
+    pub tg_token: String,
+    pub tg_chat_id: String,
     /// Названия разделов: ссылка -> человекочитаемое имя
     pub section_titles: std::collections::HashMap<String, String>,
     /// Роли: роль -> номера разделов (например "несост" -> ["4041"])
@@ -47,6 +49,8 @@ impl Default for Config {
             log_file: "parser.log".to_string(),
             admin_section: String::new(),
             admin_nicks: vec!["Richard_Torenno".into(), "R.Torenno".into(), "Richard Torenno".into()],
+            tg_token: String::new(),
+            tg_chat_id: String::new(),
             section_titles: std::collections::HashMap::new(),
             role_map: default_role_map(),
         }
@@ -105,6 +109,8 @@ impl Config {
             "RECIPIENTS_FILE" => self.recipients_file = val.to_string(),
             "LOG_FILE" => self.log_file = val.to_string(),
             "ADMIN_SECTION" => self.admin_section = val.to_string(),
+            "TG_TOKEN" => self.tg_token = val.to_string(),
+            "TG_CHAT_ID" => self.tg_chat_id = val.to_string(),
             "ADMIN_NICKS" => self.admin_nicks = val.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect(),
             "ROLE_MAP" => {
                 self.role_map.clear();

@@ -86,6 +86,11 @@ async fn main() -> anyhow::Result<()> {
         let vk2 = vk.clone();
         let sessions2 = sessions.clone();
         tokio::spawn(async move {
+            let http = reqwest::Client::builder()
+                .timeout(Duration::from_secs(10))
+                .user_agent("Mozilla/5.0")
+                .build()
+                .unwrap_or_default();
             // первый круг всегда "тихий", чтобы не заспамить после обновления
             let mut first_round = true;
             loop {
@@ -129,6 +134,7 @@ async fn main() -> anyhow::Result<()> {
                                     for u in users2.all().iter().filter(|u| u.enabled) {
                                         vk2.send_message(u.vk_id, &msg, Some(kb.clone())).await;
                                     }
+                                    tg_send(&http, &cfg2, &msg).await;
                                     log::info!("[admin-alert] {}", t.title);
                                     storage2.mark_notified_key(&key);
                                 }
@@ -149,11 +155,27 @@ async fn main() -> anyhow::Result<()> {
                                 storage2.add_key(&key, &t);
                                 if first_round || seed_section { continue; }
                                 let sec_name = cfg2.section_title(&sec);
+                                // читаем первый пост: ссылки на доказательства
+                                let mut evidence = String::new();
+                                if let Ok((body, _author)) = forum.forum.read_first_post(&t.url).await {
+                                    let links = extract_links(&body);
+                                    if !links.is_empty() {
+                                        let (ok, bad) = check_links(&http, &links).await;
+                                        evidence = if bad == 0 {
+                                            format!("\n🧾 Доказательства: ✅ {} сс. доступны", ok)
+                                        } else {
+                                            format!("\n🧾 Доказательства: ⚠️ {} ок, {} битых", ok, bad)
+                                        };
+                                    } else {
+                                        evidence = "\n🧾 Доказательства: ❌ не приложены".to_string();
+                                    }
+                                }
                                 let msg = format!(
-                                    "🆕 Новая тема\n🗂 {}\n\n📌 {}\n👤 Автор: {}\n🔗 {}",
-                                    sec_name, t.title, t.author, t.url
+                                    "🆕 Новая тема\n🗂 {}\n\n📌 {}\n👤 Автор: {}\n🔗 {}{}",
+                                    sec_name, t.title, t.author, t.url, evidence
                                 );
                                 let kb = reply_keyboard(&t.id);
+                                tg_send(&http, &cfg2, &msg).await;
                                 let mut sent = 0;
                                 for u in users2.all().iter().filter(|u| u.enabled) {
                                     // если человек выбрал разделы — шлём только по ним; иначе всё
@@ -203,6 +225,51 @@ fn admin_panel_keyboard() -> Value {
             ]
         ]
     })
+}
+
+
+/// Вытаскивает ссылки из текста.
+fn extract_links(text: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for raw in text.split_whitespace() {
+        let t = raw.trim_matches(|c: char| c == '.' || c == ',' || c == ')' || c == '(' || c == ']' || c == '[' || c == ';' || c == '"' || c == '\'');
+        if (t.starts_with("http://") || t.starts_with("https://")) && t.len() > 12 {
+            if !out.iter().any(|x| x == t) {
+                out.push(t.to_string());
+            }
+        }
+    }
+    out.truncate(4);
+    out
+}
+
+/// Проверяет доступность ссылок: (ok, bad).
+async fn check_links(http: &reqwest::Client, links: &[String]) -> (usize, usize) {
+    let mut ok = 0usize;
+    let mut bad = 0usize;
+    for l in links {
+        match http.head(l).send().await {
+            Ok(r) => {
+                if r.status().is_success() || r.status().is_redirection() { ok += 1; } else { bad += 1; }
+            }
+            Err(_) => bad += 1,
+        }
+    }
+    (ok, bad)
+}
+
+/// Дублирует сообщение в Telegram (если задан токен).
+async fn tg_send(http: &reqwest::Client, cfg: &Config, text: &str) {
+    if cfg.tg_token.is_empty() || cfg.tg_chat_id.is_empty() {
+        return;
+    }
+    let url = format!("https://api.telegram.org/bot{}/sendMessage", cfg.tg_token);
+    let body = serde_json::json!({
+        "chat_id": cfg.tg_chat_id,
+        "text": text,
+        "disable_web_page_preview": true
+    });
+    let _ = http.post(&url).json(&body).send().await;
 }
 
 fn chat_peer() -> Option<i64> {
