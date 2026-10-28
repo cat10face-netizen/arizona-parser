@@ -88,8 +88,9 @@ async fn main() -> anyhow::Result<()> {
         let users_tg = users.clone();
         let storage_tg = storage.clone();
         let vk_tg = vk.clone();
+        let sessions_tg = sessions.clone();
         tokio::spawn(async move {
-            tg_poll(http, cfg_tg, users_tg, storage_tg, vk_tg).await;
+            tg_poll(http, cfg_tg, users_tg, storage_tg, vk_tg, sessions_tg).await;
         });
     }
 
@@ -190,7 +191,7 @@ async fn main() -> anyhow::Result<()> {
                                     sec_name, t.title, t.author, t.url, evidence
                                 );
                                 let kb = reply_keyboard(&t.id);
-                                tg_send(&http, &cfg2, &msg).await;
+                                tg_send_kb(&http, &cfg2, &msg, &t.id).await;
                                 let mut sent = 0;
                                 for u in users2.all().iter().filter(|u| u.enabled) {
                                     // если человек выбрал разделы — шлём только по ним; иначе всё
@@ -252,6 +253,7 @@ async fn tg_poll(
     users: Arc<Users>,
     storage: Arc<Storage>,
     vk: Arc<Vk>,
+    sessions: Sessions,
 ) {
     if cfg.tg_token.is_empty() || cfg.tg_chat_id.is_empty() {
         return;
@@ -260,7 +262,7 @@ async fn tg_poll(
     let mut offset: i64 = 0;
     loop {
         let url = format!("https://api.telegram.org/bot{}/getUpdates", cfg.tg_token);
-        let body = serde_json::json!({"offset": offset, "timeout": 25, "allowed_updates": ["message"]});
+        let body = serde_json::json!({"offset": offset, "timeout": 25, "allowed_updates": ["message", "callback_query"]});
         let resp = http.post(&url).json(&body).send().await;
         let Ok(resp) = resp else {
             tokio::time::sleep(Duration::from_secs(5)).await;
@@ -274,6 +276,32 @@ async fn tg_poll(
             for u in upds {
                 if let Some(id) = u.get("update_id").and_then(|x| x.as_i64()) {
                     offset = id + 1;
+                }
+                // --- нажатие кнопки ---
+                if let Some(cq) = u.get("callback_query") {
+                    let data = cq.get("data").and_then(|d| d.as_str()).unwrap_or("").to_string();
+                    let cb_id = cq.get("id").and_then(|d| d.as_str()).unwrap_or("").to_string();
+                    let _ = http.post(format!("https://api.telegram.org/bot{}/answerCallbackQuery", cfg.tg_token))
+                        .json(&serde_json::json!({"callback_query_id": cb_id})).send().await;
+                    if let Some((kind, tid)) = data.split_once(':') {
+                        let url = format!("{}/threads/{}/", cfg.forum_base, tid);
+                        let owner = users.cookies(cfg.vk_admin_id);
+                        if let Some(cookies) = owner {
+                            if let Some(forum) = get_session(&sessions, &cfg, cfg.vk_admin_id, &cookies, "tg").await {
+                                if kind == "c" {
+                                    if let Ok((body, author)) = forum.forum.read_first_post(&url).await {
+                                        let snippet: String = body.split_whitespace().collect::<Vec<_>>().join(" ");
+                                        let snippet: String = snippet.chars().take(3800).collect();
+                                        tg_send(&http, &cfg, &format!("📄 Содержимое темы\n\n👤 {}\n\n{}", author, snippet)).await;
+                                    }
+                                } else if kind == "r" {
+                                    storage.set_pending(cfg.vk_admin_id, tid, &url);
+                                    tg_send(&http, &cfg, "✍️ Пришли текст ответа одним сообщением.").await;
+                                }
+                            }
+                        }
+                    }
+                    continue;
                 }
                 let Some(msg) = u.get("message") else { continue };
                 let chat_id = msg.get("chat").and_then(|c| c.get("id")).and_then(|x| x.as_i64()).unwrap_or(0);
@@ -311,6 +339,17 @@ async fn tg_poll(
                         t.push_str(&format!("{}. {}\n", i + 1, cfg.section_title(url)));
                     }
                     tg_send(&http, &cfg, &t).await;
+                } else if let Some((tid, url)) = storage.get_pending(cfg.vk_admin_id) {
+                    storage.clear_pending(cfg.vk_admin_id);
+                    if let Some(cookies) = users.cookies(cfg.vk_admin_id) {
+                        if let Some(forum) = get_session(&sessions, &cfg, cfg.vk_admin_id, &cookies, "tg").await {
+                            let _ = tid;
+                            match forum.forum.post_reply(&url, &text).await {
+                                Ok(()) => tg_send(&http, &cfg, &format!("✅ Ответ опубликован:\n{}", url)).await,
+                                Err(e) => tg_send(&http, &cfg, &format!("❌ Не удалось: {}", e)).await,
+                            }
+                        }
+                    }
                 } else if !text.is_empty() {
                     tg_send(&http, &cfg, "Не понял. /help").await;
                 }
@@ -346,6 +385,26 @@ async fn check_links(http: &reqwest::Client, links: &[String]) -> (usize, usize)
         }
     }
     (ok, bad)
+}
+
+/// Отправка в Telegram с кнопками.
+async fn tg_send_kb(http: &reqwest::Client, cfg: &Config, text: &str, tid: &str) {
+    if cfg.tg_token.is_empty() || cfg.tg_chat_id.is_empty() {
+        return;
+    }
+    let url = format!("https://api.telegram.org/bot{}/sendMessage", cfg.tg_token);
+    let body = serde_json::json!({
+        "chat_id": cfg.tg_chat_id,
+        "text": text,
+        "disable_web_page_preview": true,
+        "reply_markup": {
+            "inline_keyboard": [[
+                {"text": "📄 Содержимое", "callback_data": format!("c:{}", tid)},
+                {"text": "✍️ Ответить", "callback_data": format!("r:{}", tid)}
+            ]]
+        }
+    });
+    let _ = http.post(&url).json(&body).send().await;
 }
 
 /// Дублирует сообщение в Telegram (если задан токен).
