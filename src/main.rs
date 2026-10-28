@@ -78,6 +78,21 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
+    // ---- Telegram: приём команд ----
+    {
+        let http = reqwest::Client::builder()
+            .timeout(Duration::from_secs(40))
+            .build()
+            .unwrap_or_default();
+        let cfg_tg = cfg.clone();
+        let users_tg = users.clone();
+        let storage_tg = storage.clone();
+        let vk_tg = vk.clone();
+        tokio::spawn(async move {
+            tg_poll(http, cfg_tg, users_tg, storage_tg, vk_tg).await;
+        });
+    }
+
     // ---- периодический парсинг: парсим ОДИН раз, рассылаем ВСЕМ ----
     {
         let cfg2 = cfg.clone();
@@ -229,6 +244,81 @@ fn admin_panel_keyboard() -> Value {
 
 
 /// Вытаскивает ссылки из текста.
+
+/// Обработка команд в Telegram (только для админа).
+async fn tg_poll(
+    http: reqwest::Client,
+    cfg: Arc<Config>,
+    users: Arc<Users>,
+    storage: Arc<Storage>,
+    vk: Arc<Vk>,
+) {
+    if cfg.tg_token.is_empty() || cfg.tg_chat_id.is_empty() {
+        return;
+    }
+    log::info!("Telegram-бот: приём команд запущен");
+    let mut offset: i64 = 0;
+    loop {
+        let url = format!("https://api.telegram.org/bot{}/getUpdates", cfg.tg_token);
+        let body = serde_json::json!({"offset": offset, "timeout": 25, "allowed_updates": ["message"]});
+        let resp = http.post(&url).json(&body).send().await;
+        let Ok(resp) = resp else {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            continue;
+        };
+        let Ok(v) = resp.json::<serde_json::Value>().await else {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            continue;
+        };
+        if let Some(upds) = v.get("result").and_then(|x| x.as_array()) {
+            for u in upds {
+                if let Some(id) = u.get("update_id").and_then(|x| x.as_i64()) {
+                    offset = id + 1;
+                }
+                let Some(msg) = u.get("message") else { continue };
+                let chat_id = msg.get("chat").and_then(|c| c.get("id")).and_then(|x| x.as_i64()).unwrap_or(0);
+                let text = msg.get("text").and_then(|t| t.as_str()).unwrap_or("").trim().to_string();
+                if chat_id.to_string() != cfg.tg_chat_id {
+                    continue;
+                }
+                let low = text.to_lowercase();
+                if matches!(low.as_str(), "/start" | "начать" | "/help" | "help") {
+                    tg_send(&http, &cfg, "🤖 Парсер Arizona RP\n\n/status — статистика\n/users — пользователи\n/msg текст — рассылка в ВК\n/sections — разделы").await;
+                } else if low == "/status" {
+                    let t = format!(
+                        "📊 Статистика\n\nТем в базе: {}\nПользователей: {}\nРазделов: {}",
+                        storage.count(), users.all().len(), cfg.sections().len()
+                    );
+                    tg_send(&http, &cfg, &t).await;
+                } else if low == "/users" || low == "люди" {
+                    let mut t = String::from("👥 Пользователи:\n");
+                    for u in users.all() {
+                        let ck = if u.cookies_enc.is_empty() { "нет" } else { "есть" };
+                        t.push_str(&format!("\n• {} | cookies: {} | разделов: {}\n", u.vk_id, ck, u.sections.len()));
+                    }
+                    tg_send(&http, &cfg, &t).await;
+                } else if let Some(rest) = text.strip_prefix("/msg ") {
+                    let mut sent = 0;
+                    for u in users.all().iter().filter(|u| u.enabled) {
+                        if vk.send_message(u.vk_id, rest.trim(), None).await {
+                            sent += 1;
+                        }
+                    }
+                    tg_send(&http, &cfg, &format!("✅ Отправлено в ВК: {}", sent)).await;
+                } else if low == "/sections" {
+                    let mut t = String::from("📋 Разделы:\n");
+                    for (i, url) in cfg.sections().iter().enumerate() {
+                        t.push_str(&format!("{}. {}\n", i + 1, cfg.section_title(url)));
+                    }
+                    tg_send(&http, &cfg, &t).await;
+                } else if !text.is_empty() {
+                    tg_send(&http, &cfg, "Не понял. /help").await;
+                }
+            }
+        }
+    }
+}
+
 fn extract_links(text: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for raw in text.split_whitespace() {
