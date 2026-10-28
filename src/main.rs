@@ -174,15 +174,8 @@ async fn main() -> anyhow::Result<()> {
                                         sec_name, t.title, t.author, t.url
                                     );
                                     let kb = reply_keyboard(&t.id);
-                                    let target = chat_peer().unwrap_or(user.vk_id);
-                                    // в беседу шлём только один раз (от админа), в личку — каждому
-                                    let should_send = chat_peer().is_some() && user.vk_id == cfg2.vk_admin_id
-                                        || chat_peer().is_none();
-                                    if !should_send {
-                                        storage2.mark_notified_key(&key);
-                                        continue;
-                                    }
-                                    if vk2.send_message(target, &msg, Some(kb)).await {
+                                    // уведомления только в личные сообщения
+                                    if vk2.send_message(user.vk_id, &msg, Some(kb)).await {
                                         log::info!("[{}] уведомление: {}", user.name, t.title);
                                         storage2.mark_notified_key(&key);
                                     } else {
@@ -570,9 +563,6 @@ async fn on_message(
 
     // если пишут в беседу — запоминаем её, туда будем слать жалобы
     let in_chat = peer_id >= 2_000_000_000;
-    if in_chat {
-        save_chat_peer(peer_id);
-    }
 
     // ---- самозапись по команде «начать» ----
     if !in_chat && !users.is_allowed(uid, cfg.vk_admin_id) {

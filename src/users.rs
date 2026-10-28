@@ -195,7 +195,7 @@ impl Users {
         if vk_id == founder_id {
             return true;
         }
-        self.get(vk_id).map(|u| u.allowed && !u.roles.is_empty()).unwrap_or(false)
+        self.get(vk_id).map(|u| u.allowed).unwrap_or(false)
     }
 
     pub fn is_founder(&self, vk_id: i64, founder_id: i64) -> bool {
