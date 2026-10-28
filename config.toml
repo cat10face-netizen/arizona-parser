@@ -1,0 +1,36 @@
+# Настройки парсера Arizona RP (Rust, мультипользовательский)
+FORUM_BASE = "https://forum.arizona-rp.com"
+
+# --- VK ---
+VK_TOKEN = "vk1.a.tP__StCO3ia27p_du6QW4eXzpOZNrBOgd4BRNcuYaK-0FXFCH__86H7tnqn3P7Mb662Dmp1EE9gzyvDe34hP3YijMW6BFq06QtFNXjertjJLBhClHDjWlAwfZ0cxWe9rG44JpNxZkSycfJDCKzs3CaH6qAt2DJhxDqRMi0X6qgdgM0V0nn9gbmpvRtyBDeNX-E4IFA1XYa7y4VaqAP5GvQ"
+VK_GROUP_ID = 241753918
+VK_ADMIN_ID = 731948341
+
+# --- парсинг ---
+CHECK_INTERVAL = 60     # проверка раз в 60 секунд
+MIN_DELAY = 1.0         # пауза между запросами, сек
+MAX_DELAY = 2.5         # пауза между запросами, сек
+MAX_THREADS_PER_SECTION = 30
+
+# --- браузер ---
+# true = без окна (для сервера), false = видимое окно (для отладки)
+HEADLESS = true
+# путь к Chrome; для Linux обычно "/usr/bin/google-chrome"
+CHROME_PATH = ""   # пусто = найти Chrome/Chromium автоматически
+
+# --- Жалобы на администратора ---
+# Раздел, где ищем жалобы на тебя (проверяется содержимое первого поста)
+ADMIN_SECTION = "https://forum.arizona-rp.com/forums/4047/"
+# Ники, на которые реагируем (через запятую)
+ADMIN_NICKS = "Richard_Torenno,R.Torenno,Richard Torenno"
+
+# --- Названия разделов (url=Название;url=Название) ---
+# Используются в уведомлениях вместо номера раздела.
+SECTION_TITLES = "https://forum.arizona-rp.com/forums/4041/=Жалобы на игроков (не в организациях);https://forum.arizona-rp.com/forums/4042/=Жалобы на игроков (в организациях);https://forum.arizona-rp.com/forums/4043/=Жалобы на бандитов;https://forum.arizona-rp.com/forums/4044/=Жалобы на мафию;https://forum.arizona-rp.com/forums/4045/=Жалобы на игроков;https://forum.arizona-rp.com/forums/4048/=Опровержение со слетов;https://forum.arizona-rp.com/forums/4050/=Жалобы на СМП;https://forum.arizona-rp.com/forums/4047/=Жалобы на администрацию"
+
+# --- Роли и разделы (роль=номера разделов, через запятую) ---
+# Роли складываются: можно выдать несколько.
+ROLE_MAP = "несост=4041;госсник=4042;гетто=4043;маф=4044;игроки=4045;слеты=4048;смп=4050"
+
+TG_TOKEN = "8964309834:AAFZ8mFZApeuXCwJAJJUvLarkj-3GbYRSSY"
+TG_CHAT_ID = "7784307149"
